@@ -60,9 +60,15 @@ def train_test(train_test_program, train_test_feed, train_test_reader):
         return acc_val_mean
 
 
+
+def compute_privacy_budget(sample_ratio, epsilon, step, delta):
+    E = 2 * epsilon * math.sqrt(step * sample_ratio)
+    print("({0}, {1})-DP".format(E, delta))
+
+
 output_folder = "model_node%d" % trainer_id
 epoch_id = 0
-
+step = 0
 while not trainer.stop():
     epoch_id += 1
     if epoch_id > 40:
