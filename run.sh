@@ -1,8 +1,10 @@
-python fl_master.py
+#killall python
+#python fl_master.py
+#sleep 2
+python -u fl_server.py >log/server0.log &
 sleep 2
-python -u fl_server.py >server0.log &
+for ((i=0;i<35;i++))
+do
+python -u fl_trainer.py $i >log/trainer_step5_$i.log &
 sleep 2
-python -u fl_trainer.py 0 >trainer0.log &
-sleep 2
-python -u fl_trainer.py 1 >trainer1.log &
-
+done
