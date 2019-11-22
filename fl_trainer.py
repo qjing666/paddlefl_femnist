@@ -15,29 +15,37 @@ trainer_id = int(sys.argv[1]) # trainer id for each guest
 job_path = "fl_job_config"
 job = FLRunTimeJob()
 job.load_trainer_job(job_path, trainer_id)
+job._scheduler_ep = "127.0.0.1:9091"
 trainer = FLTrainerFactory().create_fl_trainer(job)
+trainer._current_ep = "127.0.0.1:{}".format(9000+trainer_id)
 trainer.start()
-
+print(trainer._step)
 test_program = trainer._main_program.clone(for_test=True)
 
-def data_generater(trainer_id):
-	train_file = open("/home/jingqinghe/leaf/data/femnist/data/train/all_data_%d_niid_0_keep_0_train_9.json" % trainer_id,'r')
-	test_file = open("/home/jingqinghe/leaf/data/femnist/data/test/all_data_%d_niid_0_keep_0_test_9.json" % trainer_id, 'r')
+def data_generater(trainer_id,inner_step,batch_size,count_by_step):
+	train_file = open("./femnist_data/train/all_data_%d_niid_0_keep_0_train_9.json" % trainer_id,'r')
+	test_file = open("./femnist_data/test/all_data_%d_niid_0_keep_0_test_9.json" % trainer_id, 'r')
 	json_train = json.load(train_file)
 	json_test = json.load(test_file)
 	users = json_train["users"]
 	rand = random.randrange(0,len(users)) # random choose a user from each trainer
         cur_user = users[rand]
+	print('training using '+cur_user)
 	def train_data():
 		train_images = json_train["user_data"][cur_user]['x']
 		train_labels = json_train["user_data"][cur_user]['y']
-		for i in xrange(len(train_images)):
-			yield train_images[i], train_labels[i]
+		if count_by_step:
+			for i in xrange(inner_step*batch_size):
+				yield train_images[i%(len(train_images))], train_labels[i%(len(train_images))]
+		else:
+			for i in xrange(len(train_images)):
+                        	yield train_images[i], train_labels[i]
 	def test_data():
-		test_images = json_test['user_data'][cur_user]['x']
-                test_labels = json_test['user_data'][cur_user]['y']
-                for i in xrange(len(test_images)):
-                        yield test_images[i], test_labels[i]
+		for user in users:
+			test_images = json_test['user_data'][user]['x']
+                	test_labels = json_test['user_data'][user]['y']
+                	for i in xrange(len(test_images)):
+                        	yield test_images[i], test_labels[i]
 	
 	train_file.close()
 	test_file.close()
@@ -66,25 +74,42 @@ def compute_privacy_budget(sample_ratio, epsilon, step, delta):
     print("({0}, {1})-DP".format(E, delta))
 
 
-output_folder = "model_node%d" % trainer_id
 epoch_id = 0
 step = 0
+epoch = 3000
+count_by_step = False
+if count_by_step:
+	output_folder = "model_node%d" % trainer_id
+else: 
+	output_folder = "model_node%d_epoch" % trainer_id
+	
+
 while not trainer.stop():
+    count = 0
     epoch_id += 1
-    if epoch_id > 40:
+    if epoch_id > epoch:
         break
     print("epoch %d start train" % (epoch_id))
-    train_data,test_data= data_generater(trainer_id)
+    train_data,test_data= data_generater(trainer_id,inner_step=trainer._step,batch_size=64,count_by_step=count_by_step)
     train_reader = paddle.batch(
         paddle.reader.shuffle(train_data, buf_size=500),
         batch_size=64)
+
     test_reader = paddle.batch(
         test_data, batch_size=64) 
-    for step_id, data in enumerate(train_reader()):
-        acc = trainer.run(feeder.feed(data), fetch=["accuracy_0.tmp_0"])
-        step += 1
+    if count_by_step:
+    	for step_id, data in enumerate(train_reader()):
+            acc = trainer.run(feeder.feed(data), fetch=["accuracy_0.tmp_0"])
+            step += 1
+            count += 1
+	    print(count)
+            if count % trainer._step == 0: 
+                break
     # print("acc:%.3f" % (acc[0]))
+    else:
+        trainer.run_with_epoch(train_reader,feeder,fetch=["accuracy_0.tmp_0"],num_epoch=1) 
     
+
     acc_val = train_test(
         train_test_program=test_program,
         train_test_reader=test_reader,
@@ -92,6 +117,6 @@ while not trainer.stop():
 
     print("Test with epoch %d, accuracy: %s" % (epoch_id, acc_val))
     compute_privacy_budget(sample_ratio=0.001, epsilon=0.1, step=step, delta=0.00001)
-   
-    save_dir = (output_folder + "/epoch_%d") % epoch_id
-    trainer.save_inference_program(output_folder)
+    if trainer_id == 0:  
+    	save_dir = (output_folder + "/epoch_%d") % epoch_id
+    	trainer.save_inference_program(output_folder)
