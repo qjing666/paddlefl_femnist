@@ -1,4 +1,7 @@
-python fl_master.py
+#killall python
+#python fl_master.py
+#sleep 2
+python -u fl_server.py >log/server0.log &
 sleep 2
 python -u fl_scheduler.py >scheduler.log &
 sleep 2
